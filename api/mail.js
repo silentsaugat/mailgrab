@@ -1,81 +1,101 @@
-const Imap = require('imap');
-const { simpleParser } = require('mailparser');
+import { simpleParser } from 'mailparser';
+import Imap from 'imap';
+import { promisify } from 'util';
 
-module.exports = async (req, res) => {
+export default async function handler(req, res) {
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method Not Allowed' });
+    return res.status(405).json({ error: 'Method not allowed' });
   }
 
   const { mail } = req.body;
-  if (!mail || !mail.includes('@')) {
-    return res.status(400).json({ error: 'Invalid email' });
+  if (!mail || typeof mail !== 'string') {
+    return res.status(400).json({ error: 'Missing or invalid "mail" field' });
   }
 
-  const domainPart = mail.split('@')[1];
-  const domainName = domainPart.split('.')[1]; // e.g., from xyz.yoyobu.com => yoyobu
+  // Extract domain name between the last `.` and `.com`
+  const domainMatch = mail.match(/@[^.]+\.([^.]+)\.com$/);
+  if (!domainMatch) {
+    return res.status(400).json({ error: 'Invalid mail format for domain extraction' });
+  }
+  const domainName = domainMatch[1];
 
-  const imapUser = `jackcz@${domainName}.com`;
-  const imap = new Imap({
-    user: imapUser,
+  // Dynamic IMAP credentials
+  const imapConfig = {
+    user: `jackcz@${domainName}.com`,
     password: 'Random@728',
     host: 'server-1743635354.getmx.org',
     port: 993,
     tls: true
-  });
+  };
 
-  function openInbox(cb) {
-    imap.openBox('INBOX', true, cb);
-  }
+  const imap = new Imap(imapConfig);
 
-  imap.once('ready', function () {
-    openInbox(function (err, box) {
-      if (err) {
-        imap.end();
-        return res.status(500).json({ error: 'Failed to open inbox' });
-      }
+  const openBox = (mailbox) =>
+    new Promise((resolve, reject) => {
+      imap.openBox(mailbox, false, (err, box) => {
+        if (err) reject(err);
+        else resolve(box);
+      });
+    });
 
-      const sinceDate = new Date();
-      sinceDate.setMinutes(sinceDate.getMinutes() - 10);
+  const search = (criteria) =>
+    new Promise((resolve, reject) => {
+      imap.search(criteria, (err, results) => {
+        if (err) reject(err);
+        else resolve(results);
+      });
+    });
 
-      imap.search([['SINCE', sinceDate.toUTCString()]], function (err, results) {
-        if (err || results.length === 0) {
-          imap.end();
-          return res.status(404).json({ error: 'No recent messages' });
-        }
+  const fetchMail = (uids) =>
+    new Promise((resolve, reject) => {
+      const f = imap.fetch(uids, { bodies: '' });
+      f.on('message', (msg) => {
+        msg.on('body', async (stream) => {
+          try {
+            const parsed = await simpleParser(stream);
 
-        const f = imap.fetch(results.slice(-5), { bodies: '' });
+            const from = parsed.from?.value?.[0]?.address?.toLowerCase();
+            const recipients = (parsed.to?.value || []).map(v => v.address.toLowerCase());
+            const subject = parsed.subject || '';
+            const body = parsed.text || '';
 
-        let foundCode = null;
+            const isMatch =
+              from === 'verify@x.com' &&
+              recipients.includes(mail.toLowerCase()) &&
+              subject.toLowerCase().includes('confirm your email address to access');
 
-        f.on('message', function (msg) {
-          msg.on('body', function (stream) {
-            simpleParser(stream, async (err, parsed) => {
-              const { subject, text } = parsed;
-              if (subject?.toLowerCase().includes('confirm your email') && text?.includes('X')) {
-                const codeMatch = text.match(/\b\d{6}\b/);
-                if (codeMatch) {
-                  foundCode = codeMatch[0];
-                }
+            if (isMatch) {
+              const match = body.match(/\b\d{6}\b/);
+              if (match) {
+                resolve(match[0]);
               }
-            });
-          });
-        });
-
-        f.once('end', function () {
-          imap.end();
-          if (foundCode) {
-            res.status(200).json({ code: foundCode });
-          } else {
-            res.status(404).json({ error: 'Code not found' });
+            }
+          } catch (e) {
+            reject(e);
           }
         });
       });
+      f.on('error', reject);
+      f.on('end', () => reject('No matching email found.'));
     });
+
+  imap.once('ready', async () => {
+    try {
+      await openBox('INBOX');
+      const uids = await search(['UNSEEN', ['SINCE', new Date()]]);
+      if (!uids.length) throw 'No unseen messages';
+      const code = await fetchMail(uids.reverse());
+      imap.end();
+      res.status(200).json({ code });
+    } catch (err) {
+      imap.end();
+      res.status(500).json({ error: typeof err === 'string' ? err : err.message });
+    }
   });
 
-  imap.once('error', function (err) {
-    res.status(500).json({ error: 'IMAP error', details: err.message });
+  imap.once('error', (err) => {
+    res.status(500).json({ error: 'IMAP connection error: ' + err.message });
   });
 
   imap.connect();
-};
+}
