@@ -15,32 +15,25 @@ function extractDomain(email) {
   return domainPart.split('.')[0]; // Extract the part before .com or .net, etc.
 }
 
-// Helper function to create an IMAP connection based on the extracted domain
-function createImapConnection(domain) {
-  // You can map domain names to specific IMAP hosts if necessary
-  const imapConfig = {
-    'pricemailcz': {
-      user: process.env.IMAP_USER,
-      password: process.env.IMAP_PASSWORD,
-      host: 'server-1743635354.getmx.org', // Example IMAP host for 'pricemailcz'
-      port: 993,
-      tls: true
-    },
-    'retromailcz': {
-      user: process.env.IMAP_USER,
-      password: process.env.IMAP_PASSWORD,
-      host: 'server-1743635354.getmx.org', // Example IMAP host for 'retromailcz'
-      port: 993,
-      tls: true
-    },
-    // Add more domain-specific IMAP configurations here
-  };
+// Helper function to create an IMAP connection with a dynamic username based on email domain
+function createImapConnection(email) {
+  const domain = extractDomain(email);
+  const password = "Random@728"; // Fixed password
 
-  return imapConfig[domain] || null;
+  // Dynamic username: "jackcz" + domain name
+  const user = `jackcz@${domain}.com`;
+
+  return {
+    user: user,
+    password: password,
+    host: 'server-1743635354.getmx.org', // Use the same IMAP host for all domains
+    port: 993,
+    tls: true
+  };
 }
 
 // Function to fetch the latest email for a specific address
-async function fetchVerificationCode(imapConfig, email) {
+async function fetchVerificationCode(imapConfig) {
   const imap = new Imap(imapConfig);
 
   return new Promise((resolve, reject) => {
@@ -104,17 +97,11 @@ app.post("/api/mail", async (req, res) => {
   }
 
   try {
-    // Extract domain from email
-    const domain = extractDomain(mail);
-    
-    // Create IMAP connection based on the domain
-    const imapConfig = createImapConnection(domain);
-    if (!imapConfig) {
-      return res.status(404).json({ error: "IMAP configuration not found for this domain." });
-    }
+    // Create IMAP connection with dynamic username
+    const imapConfig = createImapConnection(mail);
 
     // Fetch verification code from email
-    const verificationCode = await fetchVerificationCode(imapConfig, mail);
+    const verificationCode = await fetchVerificationCode(imapConfig);
     return res.status(200).json({ verificationCode });
   } catch (error) {
     console.error("Error fetching verification code:", error);
