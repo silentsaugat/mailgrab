@@ -1,83 +1,81 @@
-const imaps = require('imap-simple');
+const Imap = require('imap');
 const { simpleParser } = require('mailparser');
 
-function extractTwitterCode(text) {
-  const match = text.match(/^(\s)*(\d{6})(\s)*$/m);
-  return match ? match[2] : null;
-}
-
-function extractDomainName(email) {
-  try {
-    const domainPart = email.split('@')[1];
-    const parts = domainPart.split('.');
-    if (parts.length >= 2) {
-      return parts[parts.length - 2];
-    }
-  } catch (e) {
-    console.error('Invalid email format:', email);
-  }
-  return null;
-}
-
-async function getTwitterCode(toEmail, imapConfig) {
-  try {
-    const connection = await imaps.connect({ imap: imapConfig });
-    await connection.openBox('INBOX');
-    const delay = 10 * 60 * 1000;
-    const since = new Date(Date.now() - delay);
-    const searchCriteria = [
-      'UNSEEN',
-      ['SINCE', since.toISOString()],
-      ['FROM', 'twitter.com']
-    ];
-    const fetchOptions = {
-      bodies: ['HEADER.FIELDS (TO SUBJECT)', 'TEXT'],
-      markSeen: true
-    };
-    const messages = await connection.search(searchCriteria, fetchOptions);
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const msg = messages[i];
-      const textPart = msg.parts.find(p => p.which === 'TEXT');
-      const parsed = await simpleParser(textPart.body);
-      let recipients = [];
-      if (parsed.to && parsed.to.value) {
-        recipients = parsed.to.value.map(v => v.address.toLowerCase());
-      }
-      if (!recipients.includes(toEmail.toLowerCase())) continue;
-      const text = parsed.text || parsed.html || '';
-      const code = extractTwitterCode(text);
-      if (code) {
-        await connection.end();
-        return code;
-      }
-    }
-    await connection.end();
-    return null;
-  } catch (err) {
-    console.error('IMAP Error:', err);
-    return null;
-  }
-}
-
 module.exports = async (req, res) => {
-  if (req.method !== 'POST') return res.status(405).end('Method Not Allowed');
-  const { mail, project, type } = req.body;
-  if (project !== 'twitter' || type !== 'login' || !mail) {
-    return res.status(400).json({ success: false, message: 'Invalid payload' });
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method Not Allowed' });
   }
-  const imapConfig = {
-    user: process.env.IMAP_USER,
-    password: process.env.IMAP_PASSWORD,
-    host: process.env.IMAP_HOST,
-    port: parseInt(process.env.IMAP_PORT),
-    tls: true,
-    authTimeout: 5000
-  };
-  const domain = extractDomainName(mail);
-  const code = await getTwitterCode(mail, imapConfig);
-  if (code) {
-    res.json({ success: true, code, domain });
-  } else {
-    res.status(404).json({ success: false, message: 'Code not found' });
+
+  const { mail } = req.body;
+  if (!mail || !mail.includes('@')) {
+    return res.status(400).json({ error: 'Invalid email' });
   }
+
+  const domainPart = mail.split('@')[1];
+  const domainName = domainPart.split('.')[1]; // e.g., from xyz.yoyobu.com => yoyobu
+
+  const imapUser = `jackcz@${domainName}.com`;
+  const imap = new Imap({
+    user: imapUser,
+    password: 'Random@728',
+    host: 'server-1743635354.getmx.org',
+    port: 993,
+    tls: true
+  });
+
+  function openInbox(cb) {
+    imap.openBox('INBOX', true, cb);
+  }
+
+  imap.once('ready', function () {
+    openInbox(function (err, box) {
+      if (err) {
+        imap.end();
+        return res.status(500).json({ error: 'Failed to open inbox' });
+      }
+
+      const sinceDate = new Date();
+      sinceDate.setMinutes(sinceDate.getMinutes() - 10);
+
+      imap.search([['SINCE', sinceDate.toUTCString()]], function (err, results) {
+        if (err || results.length === 0) {
+          imap.end();
+          return res.status(404).json({ error: 'No recent messages' });
+        }
+
+        const f = imap.fetch(results.slice(-5), { bodies: '' });
+
+        let foundCode = null;
+
+        f.on('message', function (msg) {
+          msg.on('body', function (stream) {
+            simpleParser(stream, async (err, parsed) => {
+              const { subject, text } = parsed;
+              if (subject?.toLowerCase().includes('confirm your email') && text?.includes('X')) {
+                const codeMatch = text.match(/\b\d{6}\b/);
+                if (codeMatch) {
+                  foundCode = codeMatch[0];
+                }
+              }
+            });
+          });
+        });
+
+        f.once('end', function () {
+          imap.end();
+          if (foundCode) {
+            res.status(200).json({ code: foundCode });
+          } else {
+            res.status(404).json({ error: 'Code not found' });
+          }
+        });
+      });
+    });
+  });
+
+  imap.once('error', function (err) {
+    res.status(500).json({ error: 'IMAP error', details: err.message });
+  });
+
+  imap.connect();
 };
