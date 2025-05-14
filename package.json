@@ -1,0 +1,13 @@
+{
+  "name": "mailgrab-api",
+  "version": "1.0.0",
+  "main": "index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node api/mail.js"
+  },
+  "dependencies": {
+    "imap-simple": "^5.0.0",
+    "mailparser": "^3.8.0"
+  }
+}
