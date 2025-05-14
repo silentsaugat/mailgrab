@@ -1,3 +1,4 @@
+require('dotenv').config();  // This loads the environment variables from your .env file
 const express = require("express");
 const { simpleParser } = require("mailparser");
 const Imap = require("imap");
