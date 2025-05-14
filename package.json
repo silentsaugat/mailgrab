@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "dependencies": {
     "express": "^4.17.1",
-    "imap": "^0.8.19",  // add any other dependencies your app needs
+    "imap": "^0.8.19", 
     "mailparser": "^3.7.2"
   }
 }
