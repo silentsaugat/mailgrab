@@ -8,6 +8,6 @@
   },
   "dependencies": {
     "imap-simple": "^5.0.0",
-    "mailparser": "^3.8.0"
+    "mailparser": "^3.6.4"
   }
 }
