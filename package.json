@@ -4,7 +4,7 @@
   "dependencies": {
     "express": "^4.17.1",
     "imap": "^0.8.19",
-    "mailparser": "^3.8.0",
+    "mailparser": "^3.7.2",
     "dotenv": "^10.0.0"
   }
 }
